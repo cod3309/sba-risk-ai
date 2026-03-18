@@ -77,7 +77,7 @@ except Exception as e:
 # 3. 메인 UI (원페이지 대시보드 구성)
 # =========================================================
 st.title("🏦 SBA-CBP 지능형 대출 리스크 진단 시스템")
-st.markdown("해당 지역 및 산업군(Sector)의 평균 체급을 실시간으로 분석하여, *대출 심사 승인 가능성을 진단**합니다.")
+st.markdown("해당 지역 및 산업군(Sector)의 평균 체급을 실시간으로 분석하여, **대출 심사 승인 가능성을 진단**합니다.")
 st.write("") 
 
 all_codes = get_naics_2digit_codes(df_main)
