@@ -5,284 +5,282 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
-# ⚙️ 1. 설정 (가장 먼저 와야 함)
-st.set_page_config(page_title="SBA-CBP 실시간 AI 분석기", page_icon="🏦", layout="wide")
+# --- 1. 전역 변수 및 설정 ---
+THRESHOLD_LOW = 0.15   # 15% 미만이어야 🟢 안전 (깐깐한 기준)
+THRESHOLD_HIGH = 0.35  # 35% 이상이면 무조건 🔴 위험 (타겟 재현율 80% 방어선)
 
 COL_SBA_NAICS = 'NAICSCode'
 COL_SBA_LOAN  = 'GrossApproval'
+COL_SBA_TERM  = 'TerminMonths'
 COL_CBP_EST   = 'Number of establishments (ESTAB)'
+COL_CBP_EMP   = 'Number of employees (EMP)'
 
-# 🧠 2. 저장된 모델과 핵심 데이터 로드
+# 미국 인구조사국 공식 NAICS 2자리 대분류 매핑
+NAICS_SECTOR_MAPPING = {
+    '11': 'Agriculture, Forestry, Fishing and Hunting',
+    '21': 'Mining, Quarrying, and Oil and Gas Extraction',
+    '22': 'Utilities',
+    '23': 'Construction',
+    '31': 'Manufacturing',
+    '32': 'Manufacturing',
+    '33': 'Manufacturing',
+    '42': 'Wholesale Trade',
+    '44': 'Retail Trade',
+    '45': 'Retail Trade',
+    '48': 'Transportation and Warehousing',
+    '49': 'Transportation and Warehousing',
+    '51': 'Information',
+    '52': 'Finance and Insurance',
+    '53': 'Real Estate and Rental and Leasing',
+    '54': 'Professional, Scientific, and Technical Services',
+    '55': 'Management of Companies and Enterprises',
+    '56': 'Administrative and Support and Waste Management and Remediation Services',
+    '61': 'Educational Services',
+    '62': 'Health Care and Social Assistance',
+    '71': 'Arts, Entertainment, and Recreation',
+    '72': 'Accommodation and Food Services',
+    '81': 'Other Services (except Public Administration)',
+    '92': 'Public Administration'
+}
+
+def format_naics_display(code):
+    code_str = str(code).zfill(2)[:2]
+    sector_name = NAICS_SECTOR_MAPPING.get(code_str, "Unknown Industry")
+    return f"{code_str} - {sector_name}"
+
+# 전체 페이지 여백 및 탭 설정
+st.set_page_config(page_title="SBA-CBP 지능형 심사 시스템", page_icon="🏦", layout="wide")
+
+# --- 2. 데이터 및 모델 로드 ---
 @st.cache_resource
-def load_model():
+def load_model(): 
     return joblib.load('sba_model.pkl')
 
 @st.cache_data
-def load_data():
-    # return pd.read_csv('sba_app_data.csv')
+def load_data(): 
     return pd.read_csv('sba_app_data_lite.csv')
 
-# 💡 [여기 새로 추가!] 산업코드 목록도 딱 한 번만 만들어서 저장해둡니다!
 @st.cache_data
-def get_naics_codes(df):
-    naics_2 = df['NAICS_2'].dropna().astype(str).unique().tolist()
-    naics_6 = df[COL_SBA_NAICS].dropna().astype(str).unique().tolist()
-    return sorted(list(set(naics_2 + naics_6)))
+def get_naics_2digit_codes(df):
+    codes = df['NAICS_2'].dropna().astype(str).str.zfill(2).unique().tolist()
+    return sorted(codes)
 
 try:
-    with st.spinner("⚡대시보드를 불러오는 중입니다..."):
-        model = load_model()
-        df_main = load_data()
-except FileNotFoundError:
-    st.error("🚨 'sba_model.pkl' 또는 'sba_app_data.csv' 파일이 없습니다. 먼저 `train_model.py`를 실행해주세요!")
+    model = load_model()
+    df_main = load_data()
+except Exception as e:
+    st.error("🚨 모델(`sba_model.pkl`) 또는 데이터(`sba_app_data_lite.csv`) 파일을 찾을 수 없습니다.")
     st.stop()
 
-# ---------------------------------------------------------
-# 🎨 [추가] 고급스러운 왼쪽 사이드바 구성
-# ---------------------------------------------------------
-with st.sidebar:
-    st.title("🏦 AI 리스크 심사기")
-    st.markdown("---")
-    st.markdown("미국 중소기업청(SBA)의 대출 데이터와 인구조사국(CBP)의 지역 상권 데이터를 융합하여, **가장 정교한 기업 부도 리스크를 실시간으로 예측**합니다.")
-    st.markdown("---")
-    st.info(f"**📊 사용된 데이터베이스**\n\n총 **{len(df_main):,}건**의 과거 대출/파산 기록 및 지역 인프라 데이터")
-    st.caption("© 2026 SBA AI Dashboard Project")
-
-# ---------------------------------------------------------
-# 🖥️ 메인 웹 UI 부분
-# ---------------------------------------------------------
-st.title("🏦 SBA-CBP 통합 AI 리스크 대시보드")
-st.markdown("<br>", unsafe_allow_html=True) # 약간의 여백 추가
-
-tab1, tab2 = st.tabs(["📊 산업별 분석 대시보드", "🔮 실시간 개별 기업 심사"])
 
 # =========================================================
-# 탭 1: 대시보드
+# 3. 메인 UI (원페이지 구성)
 # =========================================================
-with tab1:
-    st.subheader("🔎 맞춤형 산업군 리스크 분석")
-    
-    # 💡 [새로 추가된 로직] 지역(State) 목록 만들기 ('전국' 옵션 포함)
-    state_list = ["전국"] + sorted(df_main['State_Full'].dropna().unique().tolist())
-    
-    # 산업 코드 목록 추출 (기존과 동일)
-    all_codes = get_naics_codes(df_main)
-    
-    # 💡 [디자인 개선] 드롭다운 2개를 나란히 배치합니다.
-    col_input1, col_input2 = st.columns(2)
-    
-    with col_input1:
-        selected_state = st.selectbox(
-            "📍 분석할 지역(주)을 선택하세요", 
-            options=state_list, 
-            index=0, # 기본값은 '전국'
-            help="'전국'을 선택하면 미국 전체 데이터를, 특정 주를 선택하면 해당 지역 데이터만 분석합니다."
+st.title("🏦 SBA-CBP 지능형 대출 리스크 진단 시스템")
+st.markdown("해당 지역 및 산업군(Sector)의 평균 체급을 실시간으로 분석하여, **대출 심사 승인 가능성을 진단**합니다.")
+st.write("") # 시각적 여백
+
+all_codes = get_naics_2digit_codes(df_main)
+
+# 💡 [디자인 개선] 입력 섹션을 하나의 깔끔한 박스로 그룹화
+with st.container(border=True):
+    st.markdown("#### 📝 대출 심사 조건 입력")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: in_st = st.selectbox("📍 사업장 위치", sorted(df_main['State_Full'].dropna().unique()), key="in_st")
+    with c2: in_na = st.selectbox("🏢 산업군(Sector)", options=all_codes, format_func=format_naics_display, key="in_na")
+    with c3: 
+        in_loan = st.number_input(
+            "💰 대출 희망액 ($)", 
+            min_value=10000, max_value=5000000, value=100000, step=10000, 
+            help="미국 SBA 7(a) 대출 프로그램의 법정 최대 한도는 $5,000,000 입니다."
         )
-        
-    with col_input2:
-        search_code = st.selectbox(
-            "🔍 분석할 산업군 코드(NAICS)", 
-            options=all_codes,
-            index=all_codes.index("54") if "54" in all_codes else 0
-        )
-        
-    search_code = str(search_code).strip() 
+    with c4: in_term = st.number_input("⏳ 희망 상환기간 (개월)", value=60, step=12, min_value=12)
     
-    # 1. 먼저 산업 코드로 데이터를 필터링합니다.
-    if len(search_code) == 2:
-        ind_df = df_main[df_main['NAICS_2'].astype(str) == search_code].copy()
-        ind_title = f"대분류 산업 [{search_code}]"
+    st.write("")
+    btn_calc = st.button("AI 정밀 진단 및 시뮬레이션 시작 🚀", type="primary", use_container_width=True)
+
+if btn_calc:
+    n2 = str(in_na).zfill(2)
+    ref = df_main[(df_main['State_Full'] == in_st) & (df_main['NAICS_2'].astype(str).str.zfill(2) == n2)]
+    
+    if ref.empty:
+        est = df_main[COL_CBP_EST].mean()
+        emp = df_main[COL_CBP_EMP].mean()
+        st.info("⚠️ 해당 지역/산업군의 세부 데이터가 부족하여 전국 평균 체급을 기준으로 산출합니다.")
     else:
-        ind_df = df_main[df_main[COL_SBA_NAICS].astype(str) == search_code].copy()
-        ind_title = f"상세 산업 [{search_code}]"
+        est = ref[COL_CBP_EST].iloc[0]
+        emp = ref[COL_CBP_EMP].iloc[0]
         
-    # 2. 💡 [핵심 필터링] 사용자가 특정 지역을 선택했다면, 그 지역 데이터만 한 번 더 추려냅니다!
-    if selected_state != "전국":
-        ind_df = ind_df[ind_df['State_Full'] == selected_state]
-        view_title = f"[{selected_state}] {ind_title}"
-    else:
-        view_title = f"[전국] {ind_title}"
-        
-    # 데이터 유무 확인 및 화면 출력
-    if ind_df.empty:
-        st.warning(f"⚠️ {view_title}에 해당하는 대출 데이터가 없습니다. 다른 지역이나 코드를 선택해 보세요.")
-    else:
-        st.success(f"✅ {view_title} 데이터를 성공적으로 불러왔습니다. (총 {len(ind_df):,}건)")
-        
-        display_df = ind_df.sample(n=min(len(ind_df), 1000), random_state=42)
-        
-        feat_cols = [COL_SBA_LOAN, COL_SBA_NAICS, COL_CBP_EST]
-        display_df['Prob'] = model.predict_proba(display_df[feat_cols].fillna(0))[:, 1] * 100
-        
-        avg_p = display_df['Prob'].mean()
-        avg_l = ind_df[COL_SBA_LOAN].mean()
-
-        # 깔끔한 KPI 메트릭
-        m1, m2, m3 = st.columns(3)
-        m1.metric("💰 평균 대출액", f"${avg_l:,.0f}")
-        est_title = "🏢 지역 평균 사업체 수" if selected_state == "전국" else "🏢 해당 지역 총 사업체 수"
-        m2.metric(est_title, f"{ind_df[COL_CBP_EST].mean():,.0f}개")
-        m3.metric("🚨 AI 예측 평균 실패 확률", f"{avg_p:.1f}%")
-
-        st.divider()
-
-        # 차트 출력
-        col_l, col_r = st.columns(2)
-        with col_l:
-            fig_gauge = go.Figure(go.Indicator(
-                mode="gauge+number", value=avg_p,
-                number={'suffix': "%"},
-                gauge={'axis': {'range': [0, 100]},
-                       'steps': [{'range': [0, 30], 'color': "#e6f5e9"}, 
-                                 {'range': [30, 70], 'color': "#fff3cd"},
-                                 {'range': [70, 100], 'color': "#f8d7da"}],
-                       'bar': {'color': "#2c3e50"}}
-            ))
-            fig_gauge.update_layout(margin=dict(t=20, b=10), paper_bgcolor="rgba(0,0,0,0)", font={'color': "#333"})
-            st.plotly_chart(fig_gauge, use_container_width=True)
-            st.markdown(f"<h4 style='text-align: center; color: #555;'>{view_title}<br>평균 실패 위험 지수</h4>", unsafe_allow_html=True)
-
-        with col_r:
-            fig_scatter = px.scatter(
-                display_df, x=COL_SBA_LOAN, y='Prob', color='Prob', 
-                color_continuous_scale='RdYlBu_r',
-                labels={'Prob': '예측 실패 확률 (%)'} 
-            )
-            fig_scatter.update_layout(
-                xaxis_title="대출 금액 ($)",       
-                yaxis_title="예측 실패 확률 (%)",  
-                xaxis_tickformat=",", margin=dict(t=30, b=10),
-                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-            st.markdown(f"<h4 style='text-align: center; color: #555;'>{view_title}<br>대출 규모별 위험도 분포</h4>", unsafe_allow_html=True)
-# =========================================================
-# 탭 2: 실시간 심사
-# =========================================================
-with tab2:
-    st.subheader("🔮 개별 기업 실시간 AI 정밀 심사")
-    st.markdown("대출을 신청한 기업의 위치와 **상세 산업군(6자리)**을 입력하면, AI가 지역 상권의 경쟁도까지 고려하여 심사합니다.")
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # 🎨 [추가] 입력을 하나의 묶음(Form)으로 만들어서 엔터키 오류 방지
-    with st.form("sim_form"):
-        c1, c2, c3 = st.columns(3)
-        with c1: 
-            input_state = st.selectbox("📍 기업 소재지 (주)", sorted(df_main['State_Full'].dropna().unique()))
-        with c2: 
-            input_naics_6 = st.text_input("🏢 상세 산업군 (NAICS 6자리)", value="541110")
-        with c3: 
-            input_loan = st.number_input("💰 신청 대출 금액 ($)", value=100000, step=10000)
-        
-        # 폼 전송 버튼
-        submitted = st.form_submit_button("AI 정밀 심사 실행 🚀", type="primary", use_container_width=True)
-
-    if submitted:
-        if not input_naics_6.isdigit() or len(input_naics_6) < 2:
-            st.error("⚠️ 올바른 NAICS 코드를 입력해 주세요. (예: 541110)")
+    avg_emp = emp / max(est, 1)
+    sector_name = NAICS_SECTOR_MAPPING.get(n2, "")
+    
+    # 💡 [핵심 수정] 타겟 재현율 80%를 달성하기 위한 깐깐한 점수 변환 공식
+    def calculate_smooth_score(prob):
+        if prob <= 15:
+            return 100 - (prob * 2) 
+        elif prob <= 35:
+            return 70 - (prob - 15) 
         else:
-            naics_2_prefix = str(input_naics_6)[:2]
-            exact_match = df_main[(df_main['State_Full'] == input_state) & (df_main['NAICS_2'].astype(str) == naics_2_prefix)]
-            
-            if not exact_match.empty:
-                auto_est_val = exact_match[COL_CBP_EST].iloc[0]
-            else:
-                auto_est_val = df_main[df_main['NAICS_2'].astype(str) == naics_2_prefix][COL_CBP_EST].mean()
-                
-            if pd.isna(auto_est_val):
-                auto_est_val = 0
+            return max(5, 50 - ((prob - 35) * 1.5))
 
-            prob_res = model.predict_proba([[input_loan, int(input_naics_6), auto_est_val]])[0][1] * 100
+    def get_p_and_s(l, t):
+        l_r = l / max(avg_emp, 1)
+        m_b = l / max(t, 1)
+        
+        input_df = pd.DataFrame([{
+            'State_Full': in_st, 'NAICS_2': n2, COL_SBA_LOAN: l, COL_CBP_EST: est,
+            COL_SBA_TERM: t, 'Avg_EMP_per_EST': avg_emp, 'Loan_to_Avg_EMP_Ratio': l_r, 'Monthly_Burden': m_b
+        }])
+        
+        input_df['State_Full'] = input_df['State_Full'].astype('category')
+        input_df['NAICS_2'] = input_df['NAICS_2'].astype('category')
+        
+        raw_p = model.predict_proba(input_df)[0][1] * 100
+        raw_s = calculate_smooth_score(raw_p)
+        
+        is_knockout = False
+        knockout_reason = ""
+        
+        monthly_burden_per_emp = m_b / max(avg_emp, 1)
+        
+        # [비즈니스 룰] 1인당 월 상환액이 $2,679 초과 시 즉시 거절
+        if monthly_burden_per_emp > 2679:
+            is_knockout = True
+            knockout_reason = f"상환 여력(DSR) 기준 미달 (추정 월 상환액 \${monthly_burden_per_emp:,.0f} / 규정 한도 \$2,679 초과)"
+            raw_s = 5  
+            raw_p = 99.9
             
-            st.divider()
-           
-            # 🎨 [추가] 긴 설명을 접기/펴기 메뉴로 숨겨서 깔끔하게!
-            with st.expander("ℹ️ 'AI 예측 실패 확률' 및 분석 로그 자세히 보기"):
-                st.write("""
-                **💡 '예측 실패 확률'이란 무엇인가요?**\n
-                AI가 과거 5년간의 실제 데이터를 분석하여, **현재 신청하신 기업과 유사한 조건(업종, 대출 규모, 지역 경쟁도 등)을 가졌던 기업들이 대출금을 갚지 못하고 최종 부도(파산) 처리되었던 통계적 비율**을 뜻합니다.
-                """)
-                st.caption(f"*(⚙️ 시스템 로그: {input_state} 주의 {naics_2_prefix} 대분류 사업체 수인 {auto_est_val:,.0f}개를 지역 경쟁도로 자동 반영 완료)*")
-            
-            # 메인 심사 결과 출력
-            if prob_res < 30: 
-                st.success(f"### 🟢 승인 권장 (AI 위험도: {prob_res:.1f}%)")
-                st.write("해당 지역의 산업 인프라와 세부 업종의 과거 패턴을 볼 때 상환 가능성이 높습니다.")
-            elif prob_res < 70: 
-                st.warning(f"### 🟡 조건부 승인 (AI 위험도: {prob_res:.1f}%)")
-                st.write("세부 업종의 리스크가 있거나 대출 규모가 다소 큽니다. 추가 심사가 필요합니다.")
-            else: 
-                st.error(f"### 🔴 거절 권고 (AI 위험도: {prob_res:.1f}%)")
-                st.write("과거 데이터를 볼 때, 해당 세부 업종에서 이 정도 규모의 대출은 리스크가 매우 큽니다.")
-                
-            st.markdown("---")
-            st.subheader("📊 AI 리스크 종합 분석 리포트")
-            
-            # 계기판 차트
-            fig_gauge = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = prob_res, 
-                domain = {'x': [0, 1], 'y': [0, 1]},
-                title = {'text': "최종 AI 예측 실패 확률", 'font': {'size': 18, 'color': '#555'}},
-                number = {'suffix': "%", 'font': {'size': 35, 'color': '#333'}},
-                gauge = {
-                    'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "darkblue"},
-                    'bar': {'color': "#2c3e50", 'thickness': 0.15}, 
-                    'bgcolor': "white",
-                    'borderwidth': 0, # 테두리 없애서 더 깔끔하게
-                    'steps': [
-                        {'range': [0, 30], 'color': "#e6f5e9"}, 
-                        {'range': [30, 70], 'color': "#fff3cd"},
-                        {'range': [70, 100], 'color': "#f8d7da"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "#e74c3c", 'width': 4},
-                        'thickness': 0.75,
-                        'value': prob_res
-                    }
-                }
-            ))
-            fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_gauge, use_container_width=True)
+        return raw_p, raw_s, is_knockout, knockout_reason
 
-            # ---------------------------------------------------------
-            # 2. 🏢 상권 경쟁도(포화도)에 따른 리스크 변화 시뮬레이션
-            # ---------------------------------------------------------
-            st.markdown("---")
-            st.subheader("🏢 상권 경쟁도 리스크 시뮬레이션")
-            st.caption(f"대출 신청 금액(${input_loan:,.0f})은 고정해 두고, 해당 지역의 **동종 업계 경쟁자(사업체 수)가 변할 때** 실패 확률이 어떻게 달라지는지 AI가 가상으로 시뮬레이션합니다.")
-            
-            max_est = max(5000, int(auto_est_val * 2.5))
-            sim_est_values = np.linspace(0, max_est, 100)
-            
-            sim_data = [[input_loan, int(input_naics_6), est] for est in sim_est_values]
-            sim_probs = model.predict_proba(sim_data)[:, 1] * 100
-            
-            sim_df = pd.DataFrame({'사업체수': sim_est_values, '예측실패확률': sim_probs})
-            
-            fig_sim = px.line(sim_df, x='사업체수', y='예측실패확률')
-            
-            # 💡 [핵심 해결] opacity=0.05 였던 것을 0.15 로 올려서 색상이 선명하게 보이도록 복구했습니다!
-            fig_sim.add_hrect(y0=0, y1=30, fillcolor="green", opacity=0.15, layer="below")
-            fig_sim.add_hrect(y0=30, y1=70, fillcolor="orange", opacity=0.15, layer="below")
-            fig_sim.add_hrect(y0=70, y1=100, fillcolor="red", opacity=0.15, layer="below")
-            
-            fig_sim.add_vline(x=auto_est_val, line_dash="dash", line_color="#333", 
-                              annotation_text=f"현재 {input_state}주 상황<br>({auto_est_val:,.0f}개)", 
-                              annotation_position="bottom right")
-            
-            # 💡 하얀색 도화지 배경 유지
-            fig_sim.update_layout(
-                yaxis_range=[0, 100], 
-                xaxis_tickformat=",", 
-                xaxis_title="지역 내 동종 업계 사업체 수 (경쟁도)", 
-                yaxis_title="AI 예측 실패 확률 (%)",
-                margin=dict(t=20, b=10)
+    curr_p, curr_s, is_knockout, knockout_reason = get_p_and_s(in_loan, in_term)
+    
+    st.divider()
+    
+    # 상단 요약 지표 (대시보드 느낌 강화)
+    st.markdown(f"##### 📊 기준 지표: {in_st} 지역 / {sector_name}")
+    st.caption(f"이 산업군의 사업체당 평균 직원 수는 **{avg_emp:.1f}명**으로 분석됩니다.")
+    
+    res_col1, res_col2 = st.columns([1, 1.5], gap="large")
+    
+    with res_col1:
+        fig_sc = go.Figure(go.Indicator(
+            mode="gauge+number", value=curr_s, 
+            title={'text': "현재 조건 안전 점수", 'font': {'size': 20}},
+            number={'suffix': "점", 'font': {'size': 40}},
+            gauge={
+                'axis': {'range': [0, 100]}, 'bar': {'color': "#2c3e50"},
+                'steps': [{'range': [0, 50], 'color': "#f8d7da"}, 
+                          {'range': [50, 70], 'color': "#fff3cd"}, 
+                          {'range': [70, 100], 'color': "#d4edda"}]}
+        ))
+        fig_sc.update_layout(height=320, margin=dict(t=50, b=20, l=20, r=20))
+        st.plotly_chart(fig_sc, use_container_width=True)
+
+    with res_col2:
+        if is_knockout:
+            st.error(
+                f"**🚨 [여신 심사 자동 부결 안내]** \n\n"
+                f"고객님께서 요청하신 조건은 내부 리스크 관리 기준을 초과하여 대출 한도 산출이 불가합니다.\n\n"
+                f"**▪ 부결 사유:** {knockout_reason} \n\n"
+                f"**▪ 권고 사항:** 대출 신청 금액을 대폭 하향 조정하시거나, 상환 기간을 연장하여 재조회해 주시기 바랍니다.",
+                
             )
+        else:
+            if curr_s >= 70: 
+                status_color = "🟢"
+                status_text = "안전 (승인 가능성 높음)"
+            elif curr_s >= 50: 
+                status_color = "🟡"
+                status_text = "주의 (조건 조정 권장)"
+            else: 
+                status_color = "🔴"
+                status_text = "위험 (반려 가능성 높음)"
             
-            st.plotly_chart(fig_sim, use_container_width=True)
+            avg_loan_for_industry = ref[COL_SBA_LOAN].mean() if not ref.empty else df_main[COL_SBA_LOAN].mean()
+            avg_term_for_industry = ref[COL_SBA_TERM].mean() if not ref.empty else df_main[COL_SBA_TERM].mean()
             
-            st.info(f"""
-            💡 **AI 상권 분석 인사이트:** 현재 동종 업계 사업체가 **{auto_est_val:,.0f}개** 있는 환경에서의 리스크는 **{prob_res:.1f}%**입니다. 
-            만약 그래프가 오른쪽(사업체 증가)으로 갈수록 **하락(안전해짐)**한다면, 이는 해당 산업이 인프라와 수요가 밀집된 **'핵심 상권(집적 효과)'**에 들어갈수록 생존율이 높아진다는 것을 의미합니다. 반대로 외딴곳(왼쪽)일수록 수요 부족으로 인한 리스크가 큽니다.
-            """)
+            industry_base_p, _, _, _ = get_p_and_s(avg_loan_for_industry, avg_term_for_industry)
+            relative_risk = curr_p / max(industry_base_p, 0.1)
+            
+            st.markdown(f"### 진단 상태: {status_color} {status_text}")
+            st.write(f"현재 예상 부도 위험도: **{curr_p:.1f}%**")
+            st.caption(f"👉 동종 업계 평균 위험도({industry_base_p:.1f}%) 대비 **{relative_risk:.1f}배** 수준입니다.")
+
+        # --- 이진 탐색 알고리즘 ---
+        low_loan, high_loan, safe_loan_max = 10000, 5000000, 0
+        while low_loan <= high_loan:
+            mid_loan = (low_loan + high_loan) // 2
+            mid_loan = (mid_loan // 1000) * 1000 
+            if get_p_and_s(mid_loan, in_term)[1] >= 70:
+                safe_loan_max = mid_loan
+                low_loan = mid_loan + 1000  
+            else:
+                high_loan = mid_loan - 1000 
+
+        low_term, high_term, safe_term_min = 12, 360, 0
+        while low_term <= high_term:
+            mid_term = (low_term + high_term) // 2
+            if get_p_and_s(in_loan, mid_term)[1] >= 70:
+                safe_term_min = mid_term
+                high_term = mid_term - 1  
+            else:
+                low_term = mid_term + 1   
+                
+        if safe_term_min > 0 and get_p_and_s(in_loan, safe_term_min)[1] < 70:
+            safe_term_min = 0 
+
+        st.write("") # 간격 띄우기
+        
+        # 💡 [디자인 개선] 대안 제시 부분을 시각적으로 눈에 띄는 카드로 구성
+        if curr_s >= 70 and not is_knockout:
+            st.success("✨ **현재 조건이 해당 지역 및 산업군 기준에 비추어 볼 때 충분히 안전한 수준입니다.**", icon="✅")
+        else:
+            if not is_knockout:
+                st.warning("⚠️ **현재 조건으로는 대출 승인이 어려울 수 있습니다.** 안전 점수를 70점 이상으로 높이려면 아래 조건을 고려해 보세요.", icon="💡")
+            else:
+                st.markdown("#### 💡 AI가 제안하는 승인 가능(70점 이상) 조건")
+                
+            opt1, opt2 = st.columns(2)
+            with opt1:
+                with st.container(border=True):
+                    st.markdown("📉 **옵션 A. 대출금 축소**")
+                    if safe_loan_max > 0: 
+                        st.markdown(f"상환 기간({in_term}개월) 유지 시,<br>대출금을 **${safe_loan_max:,.0f}** 이하로 낮추세요.", unsafe_allow_html=True)
+                    else: 
+                        st.markdown(f"해당 산업의 **기본 리스크가 높거나 체급이 작아**, 대출액을 최소로 줄여도 자동 승인(70점)이 어렵습니다.", unsafe_allow_html=True)
+            with opt2:
+                with st.container(border=True):
+                    st.markdown("⏳ **옵션 B. 상환기간 연장**")
+                    if safe_term_min > 0: 
+                        st.markdown(f"대출 금액(${in_loan:,.0f}) 유지 시,<br>상환 기간을 **{safe_term_min}개월** 이상으로 늘리세요.", unsafe_allow_html=True)
+                    else: 
+                        st.markdown(f"요청 금액이 동종 업계 체급 대비 너무 커서 기간을 최대로 늘려도 승인이 어렵습니다.", unsafe_allow_html=True)
+
+    # --- 시뮬레이션 그래프 ---
+    st.markdown("---")
+    st.markdown("#### 📈 조건 변화에 따른 안전 점수 시뮬레이션")
+    st.caption("그래프의 선이 초록색(70점) 구간에 들어오도록 조건을 조정해야 합니다. (점수가 5점인 바닥 구간은 규정 한도 초과에 의한 자동 거절 구간입니다.)")
+    
+    sim_col1, sim_col2 = st.columns(2)
+    
+    with sim_col1:
+        loan_sim_range = np.linspace(max(10000, in_loan * 0.2), min(in_loan * 1.5, 5000000), 30)
+        scores_by_loan = [get_p_and_s(l, in_term)[1] for l in loan_sim_range]
+        
+        fig_loan = go.Figure()
+        fig_loan.add_trace(go.Scatter(x=loan_sim_range, y=scores_by_loan, mode='lines', name='안전 점수', line=dict(color='#007bff', width=3)))
+        fig_loan.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="안전 기준 (70점)")
+        fig_loan.add_vline(x=in_loan, line_dash="solid", line_color="#dc3545", annotation_text="현재 신청액")
+        fig_loan.update_layout(title=f"상환기간 {in_term}개월 고정 시, 대출액 한도", xaxis_title="대출 금액 ($)", yaxis_title="안전 점수", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
+        st.plotly_chart(fig_loan, use_container_width=True)
+
+    with sim_col2:
+        term_sim_range = np.arange(12, max(240, in_term + 60), 12)
+        scores_by_term = [get_p_and_s(in_loan, t)[1] for t in term_sim_range]
+        
+        fig_term = go.Figure()
+        fig_term.add_trace(go.Scatter(x=term_sim_range, y=scores_by_term, mode='lines', name='안전 점수', line=dict(color='#fd7e14', width=3)))
+        fig_term.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="안전 기준 (70점)")
+        fig_term.add_vline(x=in_term, line_dash="solid", line_color="#dc3545", annotation_text="현재 신청기간")
+        fig_term.update_layout(title=f"대출액 ${in_loan:,.0f} 고정 시, 필요 상환기간", xaxis_title="상환 기간 (개월)", yaxis_title="안전 점수", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
+        st.plotly_chart(fig_term, use_container_width=True)
