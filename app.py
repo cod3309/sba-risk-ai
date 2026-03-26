@@ -5,9 +5,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
 
-# --- 1. 전역 변수 및 설정 ---
-THRESHOLD_LOW = 0.15   # 15% 미만이어야 🟢 안전 (깐깐한 기준)
-THRESHOLD_HIGH = 0.35  # 35% 이상이면 무조건 🔴 위험 (타겟 재현율 80% 방어선)
+# --- 1. Global Variables & Settings ---
+THRESHOLD_LOW = 0.15   # Must be under 15% for 🟢 Safe (Strict standard)
+THRESHOLD_HIGH = 0.35  # Unconditionally 🔴 High Risk if 35% or more (Target recall 80% defense line)
 
 COL_SBA_NAICS = 'NAICSCode'
 COL_SBA_LOAN  = 'GrossApproval'
@@ -15,7 +15,7 @@ COL_SBA_TERM  = 'TerminMonths'
 COL_CBP_EST   = 'Number of establishments (ESTAB)'
 COL_CBP_EMP   = 'Number of employees (EMP)'
 
-# 미국 인구조사국 공식 NAICS 2자리 대분류 매핑
+# US Census Bureau Official NAICS 2-digit Sector Mapping
 NAICS_SECTOR_MAPPING = {
     '11': 'Agriculture, Forestry, Fishing and Hunting',
     '21': 'Mining, Quarrying, and Oil and Gas Extraction',
@@ -48,10 +48,10 @@ def format_naics_display(code):
     sector_name = NAICS_SECTOR_MAPPING.get(code_str, "Unknown Industry")
     return f"{code_str} - {sector_name}"
 
-# 전체 페이지 여백 및 탭 설정
-st.set_page_config(page_title="SBA-CBP 지능형 심사 시스템", page_icon="🏦", layout="wide")
+# Overall Page Configuration
+st.set_page_config(page_title="SBA-CBP Intelligent Evaluation System", page_icon="🏦", layout="wide")
 
-# --- 2. 데이터 및 모델 로드 ---
+# --- 2. Load Data & Model ---
 @st.cache_resource
 def load_model(): 
     return joblib.load('sba_model.pkl')
@@ -69,35 +69,35 @@ try:
     model = load_model()
     df_main = load_data()
 except Exception as e:
-    st.error("🚨 모델(`sba_model.pkl`) 또는 데이터(`sba_app_data_lite.csv`) 파일을 찾을 수 없습니다.")
+    st.error("🚨 Model (`sba_model.pkl`) or data (`sba_app_data_lite.csv`) file could not be found.")
     st.stop()
 
 
 # =========================================================
-# 3. 메인 UI (원페이지 대시보드 구성)
+# 3. Main UI (One-page Dashboard Configuration)
 # =========================================================
-st.title("🏦 SBA-CBP 지능형 대출 리스크 진단 시스템")
-st.markdown("해당 지역 및 산업군(Sector)의 평균 체급을 실시간으로 분석하여, **대출 심사 승인 가능성을 진단**합니다.")
+st.title("🏦 SBA-CBP Intelligent Loan Risk Diagnosis System")
+st.markdown("Diagnoses the **probability of loan approval** by analyzing the average scale of the selected region and industry sector in real-time.")
 st.write("") 
 
 all_codes = get_naics_2digit_codes(df_main)
 
-# 입력 섹션을 하나의 깔끔한 박스로 그룹화
+# Group input section into a clean container
 with st.container(border=True):
-    st.markdown("#### 📝 대출 심사 조건 입력")
+    st.markdown("#### 📝 Enter Loan Evaluation Conditions")
     c1, c2, c3, c4 = st.columns(4)
-    with c1: in_st = st.selectbox("📍 사업장 위치", sorted(df_main['State_Full'].dropna().unique()), key="in_st")
-    with c2: in_na = st.selectbox("🏢 산업군(Sector)", options=all_codes, format_func=format_naics_display, key="in_na")
+    with c1: in_st = st.selectbox("📍 Business Location (State)", sorted(df_main['State_Full'].dropna().unique()), key="in_st")
+    with c2: in_na = st.selectbox("🏢 Industry Sector", options=all_codes, format_func=format_naics_display, key="in_na")
     with c3: 
         in_loan = st.number_input(
-            "💰 대출 희망액 ($)", 
+            "💰 Requested Loan Amount ($)", 
             min_value=10000, max_value=5000000, value=100000, step=10000, 
-            help="미국 SBA 7(a) 대출 프로그램의 법정 최대 한도는 $5,000,000 입니다."
+            help="The statutory maximum limit for the US SBA 7(a) loan program is $5,000,000."
         )
-    with c4: in_term = st.number_input("⏳ 희망 상환기간 (개월)", value=60, step=12, min_value=12)
+    with c4: in_term = st.number_input("⏳ Desired Repayment Term (Months)", value=60, step=12, min_value=12)
     
     st.write("")
-    btn_calc = st.button("AI 정밀 진단 및 시뮬레이션 시작 🚀", type="primary", use_container_width=True)
+    btn_calc = st.button("Start AI Precision Diagnosis & Simulation 🚀", type="primary", use_container_width=True)
 
 if btn_calc:
     n2 = str(in_na).zfill(2)
@@ -106,7 +106,7 @@ if btn_calc:
     if ref.empty:
         est = df_main[COL_CBP_EST].mean()
         emp = df_main[COL_CBP_EMP].mean()
-        st.info("⚠️ 해당 지역/산업군의 세부 데이터가 부족하여 전국 평균 체급을 기준으로 산출합니다.")
+        st.info("⚠️ Due to a lack of detailed data for this region/industry, calculations are based on the national average scale.")
     else:
         est = ref[COL_CBP_EST].iloc[0]
         emp = ref[COL_CBP_EMP].iloc[0]
@@ -114,7 +114,7 @@ if btn_calc:
     avg_emp = emp / max(est, 1)
     sector_name = NAICS_SECTOR_MAPPING.get(n2, "")
     
-    # 타겟 재현율 80%를 달성하기 위한 깐깐한 점수 변환 공식
+    # Strict score conversion formula to achieve 80% target recall
     def calculate_smooth_score(prob):
         if prob <= 15:
             return 100 - (prob * 2) 
@@ -143,11 +143,10 @@ if btn_calc:
         
         monthly_burden_per_emp = m_b / max(avg_emp, 1)
         
-        # [비즈니스 룰] 1인당 월 상환액이 $2,679 초과 시 즉시 거절 (Proxy DSR)
+        # [Business Rule] Immediate reject if monthly repayment per employee exceeds $2,679 (Proxy DSR)
         if monthly_burden_per_emp > 2679:
             is_knockout = True
-            # 역슬래시(\)를 추가하여 달러 기호가 수식으로 깨지는 현상 방지
-            knockout_reason = f"상환 여력(DSR) 기준 미달 (추정 월 상환액 \${monthly_burden_per_emp:,.0f} / 규정 한도 \$2,679 초과)"
+            knockout_reason = f"Failed to meet repayment capacity (DSR) standards (Estimated monthly repayment \${monthly_burden_per_emp:,.0f} / Exceeds regulatory limit of \$2,679)"
             raw_s = 5  
             raw_p = 99.9
             
@@ -157,17 +156,17 @@ if btn_calc:
     
     st.divider()
     
-    # 상단 요약 지표
-    st.markdown(f"##### 📊 기준 지표: {in_st} 지역 / {sector_name}")
-    st.caption(f"이 산업군의 사업체당 평균 직원 수는 **{avg_emp:.1f}명**으로 분석됩니다.")
+    # Top Summary Indicators
+    st.markdown(f"##### 📊 Benchmark Indicators: {in_st} Region / {sector_name}")
+    st.caption(f"The average number of employees per establishment in this industry is analyzed to be **{avg_emp:.1f}**.")
     
     res_col1, res_col2 = st.columns([1, 1.5], gap="large")
     
     with res_col1:
         fig_sc = go.Figure(go.Indicator(
             mode="gauge+number", value=curr_s, 
-            title={'text': "현재 조건 안전 점수", 'font': {'size': 20}},
-            number={'suffix': "점", 'font': {'size': 40}},
+            title={'text': "Current Condition Safety Score", 'font': {'size': 20}},
+            number={'suffix': " pts", 'font': {'size': 40}},
             gauge={
                 'axis': {'range': [0, 100]}, 'bar': {'color': "#2c3e50"},
                 'steps': [{'range': [0, 50], 'color': "#f8d7da"}, 
@@ -180,21 +179,21 @@ if btn_calc:
     with res_col2:
         if is_knockout:
             st.error(
-                f"**🚨 [대출 심사 자동 부결 안내]** \n\n"
-                f"고객님께서 요청하신 조건은 당행의 내부 리스크 관리 기준을 초과하여 대출 한도 산출이 불가합니다.\n\n"
-                f"**▪ 부결 사유:** {knockout_reason} \n\n"
-                f"**▪ 권고 사항:** 대출 신청 금액을 대폭 하향 조정하시거나, 상환 기간을 연장하여 재조회해 주시기 바랍니다.",
+                f"**🚨 [Notice of Automatic Loan Rejection]** \n\n"
+                f"The conditions you requested exceed our internal risk management standards, making it impossible to calculate a loan limit.\n\n"
+                f"**▪ Reason for Rejection:** {knockout_reason} \n\n"
+                f"**▪ Recommendation:** Please significantly lower the requested loan amount or extend the repayment period and try again.",
             )
         else:
             if curr_s >= 70: 
                 status_color = "🟢"
-                status_text = "안전 (승인 가능성 높음)"
+                status_text = "Safe (High probability of approval)"
             elif curr_s >= 50: 
                 status_color = "🟡"
-                status_text = "주의 (조건 조정 권장)"
+                status_text = "Caution (Condition adjustment recommended)"
             else: 
                 status_color = "🔴"
-                status_text = "위험 (반려 가능성 높음)"
+                status_text = "Risk (High probability of rejection)"
             
             avg_loan_for_industry = ref[COL_SBA_LOAN].mean() if not ref.empty else df_main[COL_SBA_LOAN].mean()
             avg_term_for_industry = ref[COL_SBA_TERM].mean() if not ref.empty else df_main[COL_SBA_TERM].mean()
@@ -202,17 +201,17 @@ if btn_calc:
             industry_base_p, _, _, _ = get_p_and_s(avg_loan_for_industry, avg_term_for_industry)
             relative_risk = curr_p / max(industry_base_p, 0.1)
             
-            # HTML 블록을 사용하여 줄바꿈 여백을 완벽하게 밀착시키고 경고 문구 강조
+            # Using HTML block to manage spacing tightly and emphasize warnings
             st.markdown(
-                f"### 진단 상태: {status_color} {status_text}\n"
+                f"### Diagnosis Status: {status_color} {status_text}\n"
                 f"<div style='margin-top: -10px; margin-bottom: 15px; line-height: 1.6;'>"
-                f"<span style='font-size: 1.05em;'>현재 예상 부도 위험도: <b>{curr_p:.1f}%</b></span><br>"
-                f"<span style='color: #0056b3; font-weight: 500;'>👉 동종 업계 평균 위험도({industry_base_p:.1f}%) 대비 {relative_risk:.1f}배 높은 수준입니다.</span>"
+                f"<span style='font-size: 1.05em;'>Current Estimated Default Risk: <b>{curr_p:.1f}%</b></span><br>"
+                f"<span style='color: #0056b3; font-weight: 500;'>👉 This is {relative_risk:.1f} times higher than the industry average risk ({industry_base_p:.1f}%).</span>"
                 f"</div>",
                 unsafe_allow_html=True
             )
 
-        # --- 이진 탐색 알고리즘 ---
+        # --- Binary Search Algorithm ---
         low_loan, high_loan, safe_loan_max = 10000, 5000000, 0
         while low_loan <= high_loan:
             mid_loan = (low_loan + high_loan) // 2
@@ -237,35 +236,35 @@ if btn_calc:
 
         st.write("") 
         
-        # 대안 제시 카드
+        # Suggestion Cards
         if curr_s >= 70 and not is_knockout:
-            st.success("✨ **현재 조건이 해당 지역 및 산업군 기준에 비추어 볼 때 충분히 안전한 수준입니다.**", icon="✅")
+            st.success("✨ **The current conditions are sufficiently safe based on the standards for this region and industry.**", icon="✅")
         else:
             if not is_knockout:
-                st.warning("⚠️ **현재 조건으로는 대출 승인이 어려울 수 있습니다.** 안전 점수를 70점 이상으로 높이려면 아래 조건을 고려해 보세요.", icon="💡")
+                st.warning("⚠️ **Loan approval may be difficult under current conditions.** Consider the options below to raise the safety score to 70 or higher.", icon="💡")
             else:
-                st.markdown("#### 💡 AI가 제안하는 승인 가능(70점 이상) 조건")
+                st.markdown("#### 💡 AI Suggested Conditions for Approval (70+ points)")
                 
             opt1, opt2 = st.columns(2)
             with opt1:
                 with st.container(border=True):
-                    st.markdown("📉 **옵션 A. 대출금 축소**")
+                    st.markdown("📉 **Option A. Reduce Loan Amount**")
                     if safe_loan_max > 0: 
-                        st.markdown(f"상환 기간({in_term}개월) 유지 시,<br>대출금을 **${safe_loan_max:,.0f}** 이하로 낮추세요.", unsafe_allow_html=True)
+                        st.markdown(f"While keeping the repayment term ({in_term} months),<br>lower the loan amount to **${safe_loan_max:,.0f}** or less.", unsafe_allow_html=True)
                     else: 
-                        st.markdown(f"해당 산업의 **기본 리스크가 높거나 체급이 작아**, 대출액을 최소로 줄여도 자동 승인(70점)이 어렵습니다.", unsafe_allow_html=True)
+                        st.markdown(f"Due to the **high base risk or small scale** of this industry, automatic approval (70 pts) is difficult even if the loan amount is minimized.", unsafe_allow_html=True)
             with opt2:
                 with st.container(border=True):
-                    st.markdown("⏳ **옵션 B. 상환기간 연장**")
+                    st.markdown("⏳ **Option B. Extend Repayment Term**")
                     if safe_term_min > 0: 
-                        st.markdown(f"대출 금액(${in_loan:,.0f}) 유지 시,<br>상환 기간을 **{safe_term_min}개월** 이상으로 늘리세요.", unsafe_allow_html=True)
+                        st.markdown(f"While keeping the loan amount (${in_loan:,.0f}),<br>extend the repayment term to **{safe_term_min} months** or more.", unsafe_allow_html=True)
                     else: 
-                        st.markdown(f"요청 금액이 동종 업계 체급 대비 너무 커서 기간을 최대로 늘려도 승인이 어렵습니다.", unsafe_allow_html=True)
+                        st.markdown(f"The requested amount is too large compared to the industry scale, making approval difficult even with the maximum term extension.", unsafe_allow_html=True)
 
-    # --- 시뮬레이션 그래프 ---
+    # --- Simulation Graphs ---
     st.markdown("---")
-    st.markdown("#### 📈 조건 변화에 따른 안전 점수 시뮬레이션")
-    st.caption("그래프의 선이 초록색(70점) 구간에 들어오도록 조건을 조정해야 합니다. (점수가 5점인 바닥 구간은 규정 한도 초과에 의한 자동 거절 구간입니다.)")
+    st.markdown("#### 📈 Safety Score Simulation Based on Condition Changes")
+    st.caption("Adjust the conditions so the graph line enters the green (70 pts) zone. (The flat 5-point area represents automatic rejection due to exceeding regulatory limits.)")
     
     sim_col1, sim_col2 = st.columns(2)
     
@@ -274,10 +273,10 @@ if btn_calc:
         scores_by_loan = [get_p_and_s(l, in_term)[1] for l in loan_sim_range]
         
         fig_loan = go.Figure()
-        fig_loan.add_trace(go.Scatter(x=loan_sim_range, y=scores_by_loan, mode='lines', name='안전 점수', line=dict(color='#007bff', width=3)))
-        fig_loan.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="안전 기준 (70점)")
-        fig_loan.add_vline(x=in_loan, line_dash="solid", line_color="#dc3545", annotation_text="현재 신청액")
-        fig_loan.update_layout(title=f"상환기간 {in_term}개월 고정 시, 대출액 한도", xaxis_title="대출 금액 ($)", yaxis_title="안전 점수", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
+        fig_loan.add_trace(go.Scatter(x=loan_sim_range, y=scores_by_loan, mode='lines', name='Safety Score', line=dict(color='#007bff', width=3)))
+        fig_loan.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="Safety Baseline (70 pts)")
+        fig_loan.add_vline(x=in_loan, line_dash="solid", line_color="#dc3545", annotation_text="Current Req. Amt")
+        fig_loan.update_layout(title=f"Loan Limit with Fixed {in_term}-Month Term", xaxis_title="Loan Amount ($)", yaxis_title="Safety Score", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
         st.plotly_chart(fig_loan, use_container_width=True)
 
     with sim_col2:
@@ -285,8 +284,10 @@ if btn_calc:
         scores_by_term = [get_p_and_s(in_loan, t)[1] for t in term_sim_range]
         
         fig_term = go.Figure()
-        fig_term.add_trace(go.Scatter(x=term_sim_range, y=scores_by_term, mode='lines', name='안전 점수', line=dict(color='#fd7e14', width=3)))
-        fig_term.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="안전 기준 (70점)")
-        fig_term.add_vline(x=in_term, line_dash="solid", line_color="#dc3545", annotation_text="현재 신청기간")
-        fig_term.update_layout(title=f"대출액 ${in_loan:,.0f} 고정 시, 필요 상환기간", xaxis_title="상환 기간 (개월)", yaxis_title="안전 점수", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
+        fig_term.add_trace(go.Scatter(x=term_sim_range, y=scores_by_term, mode='lines', name='Safety Score', line=dict(color='#fd7e14', width=3)))
+        fig_term.add_hline(y=70, line_dash="dash", line_color="green", annotation_text="Safety Baseline (70 pts)")
+        fig_term.add_vline(x=in_term, line_dash="solid", line_color="#dc3545", annotation_text="Current Req. Term")
+        fig_term.update_layout(title=f"Required Term with Fixed ${in_loan:,.0f} Loan", xaxis_title="Repayment Term (Months)", yaxis_title="Safety Score", yaxis=dict(range=[0, 100]), margin=dict(t=40, b=40))
         st.plotly_chart(fig_term, use_container_width=True)
+
+
